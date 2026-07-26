@@ -3,6 +3,12 @@ import path from "path";
 import fs from "fs/promises";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
+
+// Initialize Supabase Client
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 // Initialize express app
 const app = express();
@@ -12,8 +18,10 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Path to the database file
-const PRODUCTS_FILE_PATH = path.join(process.cwd(), "products.json");
+// Path to the database file (use /tmp in Vercel for write access)
+const PRODUCTS_FILE_PATH = process.env.VERCEL 
+  ? path.join("/tmp", "products.json") 
+  : path.join(process.cwd(), "products.json");
 
 // Helper to calculate Levenshtein distance between two strings
 function getLevenshteinDistance(a: string, b: string): number {
@@ -42,10 +50,27 @@ function getLevenshteinDistance(a: string, b: string): number {
 
 // Helper to read the database products
 async function readProducts(): Promise<any[]> {
+  // 1. Try Supabase first if configured
+  if (supabase) {
+    const { data, error } = await supabase.from('products').select('*');
+    if (!error && data) {
+      return data;
+    }
+    if (error) {
+      console.error("Supabase read error:", error);
+    }
+  }
+
+  // 2. Fallback to local JSON files
   const defaultPath = path.join(process.cwd(), "products.json");
   const excelPath = path.join(process.cwd(), "products_from_excel.json");
   
-  for (const filePath of [defaultPath, excelPath]) {
+  // In Vercel, check /tmp first
+  const pathsToTry = process.env.VERCEL 
+    ? [path.join("/tmp", "products.json"), defaultPath, excelPath]
+    : [defaultPath, excelPath];
+
+  for (const filePath of pathsToTry) {
     try {
       const data = await fs.readFile(filePath, "utf-8");
       const parsed = JSON.parse(data);
@@ -124,10 +149,64 @@ app.post("/api/products", async (req, res) => {
     if (!Array.isArray(products)) {
       return res.status(400).json({ error: "Invalid data format. Expected a JSON array." });
     }
-    await fs.writeFile(PRODUCTS_FILE_PATH, JSON.stringify(products, null, 2), "utf-8");
+
+    if (supabase) {
+      // Upsert to Supabase
+      const { error } = await supabase
+        .from('products')
+        .upsert(products, { onConflict: 'plu' });
+      
+      if (error) throw error;
+    } else {
+      // Fallback to local write
+      await fs.writeFile(PRODUCTS_FILE_PATH, JSON.stringify(products, null, 2), "utf-8");
+    }
+
     res.json({ message: "Product database updated successfully!", count: products.length });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to save products: " + error.message });
+  }
+});
+
+// API: Migrate local JSON products to Supabase
+app.post("/api/migrate-to-supabase", async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(400).json({ error: "Supabase credentials are not configured in environment variables." });
+    }
+    
+    // Read from local JSON files specifically
+    const defaultPath = path.join(process.cwd(), "products.json");
+    const excelPath = path.join(process.cwd(), "products_from_excel.json");
+    let localProducts = [];
+    
+    for (const filePath of [defaultPath, excelPath]) {
+      try {
+        const data = await fs.readFile(filePath, "utf-8");
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localProducts = parsed;
+          break;
+        }
+      } catch (err) {
+        // Ignore
+      }
+    }
+    
+    if (localProducts.length === 0) {
+      return res.status(404).json({ error: "No local products found in products.json or products_from_excel.json" });
+    }
+
+    // Insert into Supabase
+    const { error } = await supabase
+      .from('products')
+      .upsert(localProducts, { onConflict: 'plu' });
+      
+    if (error) throw error;
+    
+    res.json({ message: "Successfully migrated products to Supabase!", count: localProducts.length });
+  } catch (error: any) {
+    res.status(500).json({ error: "Migration failed: " + error.message });
   }
 });
 
@@ -540,4 +619,8 @@ async function bootstrap() {
   });
 }
 
-bootstrap();
+if (!process.env.VERCEL) {
+  bootstrap();
+}
+
+export default app;
