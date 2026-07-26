@@ -1,5 +1,10 @@
 {
   "name": "sales-report-parser",
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "dist/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
