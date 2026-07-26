@@ -1,0 +1,6 @@
+{
+  "name": "Sales Report Parser & Matching System",
+  "description": "Extracts sales data from POS receipt images and matches PLU codes against a product database, with automatic typo correction.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
