@@ -5,9 +5,21 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 
 // Initialize Supabase Client
-const supabaseUrl = process.env.SUPABASE_URL || "";
+let supabaseUrl = process.env.SUPABASE_URL || "";
+if (supabaseUrl && !supabaseUrl.startsWith("http")) {
+  if (!supabaseUrl.includes(".")) {
+    supabaseUrl = `https://${supabaseUrl}.supabase.co`;
+  } else {
+    supabaseUrl = `https://${supabaseUrl}`;
+  }
+}
 const supabaseKey = process.env.SUPABASE_ANON_KEY || "";
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+let supabase: any = null;
+try {
+  supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+} catch(e) {
+  console.error("Failed to initialize Supabase:", e);
+}
 
 // Initialize express app
 const app = express();
